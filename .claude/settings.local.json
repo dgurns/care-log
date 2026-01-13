@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp:*)",
+      "WebFetch(domain:tailwindcss.com)",
+      "Bash(pnpm add:*)",
+      "Bash(node:*)",
+      "Bash(nvm:*)",
+      "Bash(pnpm:*)",
+      "WebFetch(domain:v5.ai-sdk.dev)",
+      "mcp__ide__getDiagnostics",
+      "WebFetch(domain:reactrouter.com)",
+      "WebFetch(domain:api.reactrouter.com)",
+      "Bash(cat:*)",
+      "WebFetch(domain:kamal-deploy.org)",
+      "Bash(ruby --version)",
+      "Bash(gem --version)",
+      "WebSearch",
+      "WebFetch(domain:www.better-auth.com)"
+    ],
+    "deny": []
+  }
+}

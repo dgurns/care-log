@@ -1,0 +1,15 @@
+.DS_Store
+/node_modules/
+
+# React Router
+/.react-router/
+/build/
+
+# Database
+second_opinion.sqlite
+local.db
+*.db
+
+.env
+
+auth-schema.ts
