@@ -13,3 +13,5 @@ local.db
 .env
 
 auth-schema.ts
+
+.claude/settings.local.json

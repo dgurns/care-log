@@ -16,7 +16,8 @@
       "Bash(ruby --version)",
       "Bash(gem --version)",
       "WebSearch",
-      "WebFetch(domain:www.better-auth.com)"
+      "WebFetch(domain:www.better-auth.com)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }
