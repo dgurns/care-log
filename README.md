@@ -42,4 +42,4 @@ The application will be available at http://localhost:5173
 
 ## Cloud Version
 
-A hosted version of Care Log is available, but access is currently limited to specific email addresses while I work on usage billing and a more secure data storage solution.
+A hosted version of Care Log is available, but access is currently limited to specific email addresses until I figure out usage billing and a more secure data storage solution.
