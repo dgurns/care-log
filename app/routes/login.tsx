@@ -1,5 +1,7 @@
-import { Form, redirect, useActionData } from "react-router";
+import { useState } from "react";
+import { redirect, useNavigate } from "react-router";
 import { auth } from "~/lib/auth-server";
+import { authClient } from "~/lib/auth-client";
 import type { Route } from "./+types/login";
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -9,25 +11,27 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 }
 
-export async function action({ request }: Route.ActionArgs) {
-  const formData = await request.formData();
-  const email = formData.get("email") as string;
-  const password = formData.get("password") as string;
-
-  try {
-    await auth.api.signInEmail({
-      body: { email, password },
-      headers: request.headers,
-    });
-    return redirect("/");
-  } catch (e) {
-    const error = e instanceof Error ? e.message : "Sign in failed";
-    return { error };
-  }
-}
-
 export default function SignIn() {
-  const actionData = useActionData<typeof action>();
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setIsLoading(true);
+
+    const result = await authClient.signIn.email({ email, password });
+
+    if (result.error) {
+      setError(result.error.message || "Sign in failed");
+      setIsLoading(false);
+    } else {
+      navigate("/");
+    }
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
@@ -37,7 +41,7 @@ export default function SignIn() {
             Sign In
           </h2>
         </div>
-        <Form method="post" className="mt-8 space-y-6">
+        <form onSubmit={handleSubmit} className="mt-8 space-y-6">
           <div className="-space-y-px rounded-md shadow-sm">
             <div>
               <input
@@ -45,6 +49,8 @@ export default function SignIn() {
                 name="email"
                 type="email"
                 placeholder="Email address"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 className="relative block w-full appearance-none rounded-none rounded-t-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:z-10 focus:border-indigo-500 focus:ring-indigo-500 focus:outline-none sm:text-sm"
               />
             </div>
@@ -54,24 +60,27 @@ export default function SignIn() {
                 name="password"
                 type="password"
                 placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 className="relative block w-full appearance-none rounded-none rounded-b-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:z-10 focus:border-indigo-500 focus:ring-indigo-500 focus:outline-none sm:text-sm"
               />
             </div>
           </div>
 
-          {actionData?.error && (
-            <div className="text-sm text-red-600">{actionData.error}</div>
+          {error && (
+            <div className="text-sm text-red-600">{error}</div>
           )}
 
           <div>
             <button
               type="submit"
-              className="group relative flex w-full justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:outline-none"
+              disabled={isLoading}
+              className="group relative flex w-full justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:outline-none disabled:opacity-50"
             >
-              Sign In
+              {isLoading ? "Signing in..." : "Sign In"}
             </button>
           </div>
-        </Form>
+        </form>
 
         <div className="text-center">
           <p className="text-sm text-gray-600">
