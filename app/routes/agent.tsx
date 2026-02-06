@@ -74,9 +74,10 @@ export async function action({ request }: Route.ActionArgs) {
           .join("\n")}`
       : "\n\nNo people currently in the system.";
 
+  const modelMessages = await convertToModelMessages(messages);
   const result = streamText({
-    model: anthropic("claude-sonnet-4-5"),
-    messages: convertToModelMessages(messages),
+    model: anthropic("claude-opus-4-6"),
+    messages: modelMessages,
     stopWhen: stepCountIs(8),
     system: `You are a medical expert with world class knowledge of medicine and the medical system including healthcare and insurance. 
       You help users manage and analyze their medical situation. Your goal is to advocate for the user. 
