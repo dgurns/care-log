@@ -26,7 +26,7 @@ cp .env.sample .env
 npm install
 ```
 
-4. Initialize the local database:
+4. Initialize the local database (only for a brand-new, empty database):
 
 ```bash
 npm run db:push
@@ -39,6 +39,16 @@ npm run dev
 ```
 
 The application will be available at http://localhost:5173
+
+## Schema Changes
+
+Schema migrations run automatically on startup, both locally and in production, via `runStartupMigrations` in `app/db/index.ts`. To change the schema:
+
+1. Edit `app/db/schema.ts`.
+2. Add a matching idempotent block to the end of `runStartupMigrations`.
+3. Restart the dev server to apply it locally. `make deploy` applies it in production.
+
+Do not run `npm run db:push` against an existing database. The current drizzle-kit version rebuilds every table on each push and can fail partway through, leaving the database half-migrated. See the comment above `runStartupMigrations` for the full rules. Back up production with `make pull-prod-db-to-local` before deploying a schema change.
 
 ## Cloud Version
 

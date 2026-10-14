@@ -19,6 +19,34 @@ export async function action({ request }: Route.ActionArgs) {
 
   const { messages } = await request.json();
 
+  // Only allow access to people (and their details) the current user created
+  const isOwnedPerson = async (personId: number) => {
+    const [person] = await db
+      .select({ id: personTable.id })
+      .from(personTable)
+      .where(
+        and(
+          eq(personTable.id, personId),
+          eq(personTable.creatorId, session.user.id),
+        ),
+      );
+    return Boolean(person);
+  };
+
+  const getOwnedDetail = async (id: number) => {
+    const [row] = await db
+      .select({ detail: medicalDetailTable })
+      .from(medicalDetailTable)
+      .innerJoin(personTable, eq(medicalDetailTable.personId, personTable.id))
+      .where(
+        and(
+          eq(medicalDetailTable.id, id),
+          eq(personTable.creatorId, session.user.id),
+        ),
+      );
+    return row?.detail;
+  };
+
   // Only include the most recent details in context; the agent can use
   // listMedicalDetailsForPerson to search/paginate the rest
   const RECENT_DETAILS_LIMIT = 20;
@@ -123,7 +151,15 @@ export async function action({ request }: Route.ActionArgs) {
       providerOptions: cacheControl,
       content: `You are a medical expert with world class knowledge of medicine and the medical system including healthcare and insurance.
       You help users manage and analyze their medical situation. Your goal is to advocate for the user.
-      You can list, create, and read medical details from the database.
+      You can list, read, create, update, and delete medical details in the database.
+
+      Each medical detail has three text fields:
+      1. summary: a brief one-line description, shown in lists.
+      2. detailedNotes: your own thorough, well-organized write-up of the detail, including relevant context, interpretation, and anything useful for future reference.
+      3. userRawContent: the user's own words, copied verbatim from their message(s), with no paraphrasing, summarizing, correcting, or reformatting. Include all of the user's text that relates to this detail. If the detail did not come from user-provided text (for example, you are recording a conclusion you reached), leave it empty.
+
+      Use updateMedicalDetail to correct or add to an existing detail instead of creating a duplicate. Use deleteMedicalDetail when a detail is wrong, duplicated, or the user asks to remove it. Older details may have no userRawContent; that is expected.
+      Do not include the current date and time in any field since it is recorded automatically.
       The people in the system and the most recent medical details for the current user are provided in the <context> block of the latest user message.
       To find other medical details (older ones, or for other people), use listMedicalDetailsForPerson with filters rather than fetching everything.
 
@@ -171,7 +207,7 @@ export async function action({ request }: Route.ActionArgs) {
             .string()
             .optional()
             .describe(
-              "Case-insensitive substring match against the summary and full content",
+              "Case-insensitive substring match against the summary, detailed notes, and user's raw content",
             ),
           order: z
             .enum(["newest", "oldest"])
@@ -209,17 +245,7 @@ export async function action({ request }: Route.ActionArgs) {
             };
           }
 
-          // Ensure the person belongs to the current user
-          const [person] = await db
-            .select({ id: personTable.id })
-            .from(personTable)
-            .where(
-              and(
-                eq(personTable.id, targetPersonId),
-                eq(personTable.creatorId, session.user.id),
-              ),
-            );
-          if (!person) {
+          if (!(await isOwnedPerson(targetPersonId))) {
             return { error: `Person with ID ${targetPersonId} not found` };
           }
 
@@ -245,7 +271,8 @@ export async function action({ request }: Route.ActionArgs) {
             conditions.push(
               or(
                 sql`${medicalDetailTable.summary} LIKE ${pattern} ESCAPE '\\'`,
-                sql`${medicalDetailTable.fullRawContent} LIKE ${pattern} ESCAPE '\\'`,
+                sql`${medicalDetailTable.detailedNotes} LIKE ${pattern} ESCAPE '\\'`,
+                sql`${medicalDetailTable.userRawContent} LIKE ${pattern} ESCAPE '\\'`,
               )!,
             );
           }
@@ -289,30 +316,116 @@ export async function action({ request }: Route.ActionArgs) {
 
       createMedicalDetail: tool({
         description:
-          "Create a new medical detail with summary and raw content. Do not include the current date and time in summary or full_raw_content since it will be automatically recorded.",
+          "Create a new medical detail. Do not include the current date and time in any field since it is recorded automatically.",
         inputSchema: z.object({
           personId: z
             .number()
             .describe(
               "The ID of the person the medical detail is associated with",
             ),
-          summary: z.string().describe("Brief summary of the medical detail"),
-          fullRawContent: z
+          summary: z
             .string()
-            .describe("Full raw content of the medical detail"),
+            .describe("Brief one-line summary of the medical detail"),
+          detailedNotes: z
+            .string()
+            .describe(
+              "Your thorough, well-organized write-up of the medical detail",
+            ),
+          userRawContent: z
+            .string()
+            .optional()
+            .describe(
+              "The user's own words about this detail, copied verbatim with no paraphrasing or reformatting. Omit if the detail did not come from user-provided text.",
+            ),
         }),
-        execute: async ({ personId, summary, fullRawContent }) => {
+        execute: async ({ personId, summary, detailedNotes, userRawContent }) => {
+          if (!(await isOwnedPerson(personId))) {
+            return { error: `Person with ID ${personId} not found` };
+          }
+
           const [newDetail] = await db
             .insert(medicalDetailTable)
             .values({
               personId,
               summary,
-              fullRawContent,
+              detailedNotes,
+              userRawContent: userRawContent || null,
               creatorId: session.user.id,
             })
             .returning();
 
           return newDetail;
+        },
+      }),
+
+      updateMedicalDetail: tool({
+        description:
+          "Update an existing medical detail. Only the fields you provide are changed; each provided field fully replaces the old value, so include the complete new text (not just the changes). Read the detail first if you need its current content.",
+        inputSchema: z.object({
+          id: z.number().describe("The ID of the medical detail to update"),
+          personId: z
+            .number()
+            .optional()
+            .describe("Move the detail to a different person"),
+          summary: z
+            .string()
+            .optional()
+            .describe("New brief one-line summary"),
+          detailedNotes: z
+            .string()
+            .optional()
+            .describe("New complete detailed notes"),
+          userRawContent: z
+            .string()
+            .optional()
+            .describe(
+              "New complete verbatim user text. When the user adds more information to an existing detail, append their new words verbatim to the existing userRawContent.",
+            ),
+        }),
+        execute: async ({ id, personId, ...fields }) => {
+          if (!(await getOwnedDetail(id))) {
+            return { error: `Medical detail with ID ${id} not found` };
+          }
+          if (personId !== undefined && !(await isOwnedPerson(personId))) {
+            return { error: `Person with ID ${personId} not found` };
+          }
+
+          const updates = Object.fromEntries(
+            Object.entries({ personId, ...fields }).filter(
+              ([, value]) => value !== undefined,
+            ),
+          );
+          if (Object.keys(updates).length === 0) {
+            return { error: "No fields provided to update" };
+          }
+
+          const [updated] = await db
+            .update(medicalDetailTable)
+            .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
+            .where(eq(medicalDetailTable.id, id))
+            .returning();
+
+          return updated;
+        },
+      }),
+
+      deleteMedicalDetail: tool({
+        description:
+          "Permanently delete a medical detail by its ID. Use when a detail is wrong, duplicated, or the user asks to remove it.",
+        inputSchema: z.object({
+          id: z.number().describe("The ID of the medical detail to delete"),
+        }),
+        execute: async ({ id }) => {
+          const detail = await getOwnedDetail(id);
+          if (!detail) {
+            return { error: `Medical detail with ID ${id} not found` };
+          }
+
+          await db
+            .delete(medicalDetailTable)
+            .where(eq(medicalDetailTable.id, id));
+
+          return { deleted: true, id, summary: detail.summary };
         },
       }),
 
@@ -322,21 +435,7 @@ export async function action({ request }: Route.ActionArgs) {
           id: z.number().describe("The ID of the medical detail to read"),
         }),
         execute: async ({ id }) => {
-          // Only allow reading details for people the current user created
-          const [row] = await db
-            .select({ detail: medicalDetailTable })
-            .from(medicalDetailTable)
-            .innerJoin(
-              personTable,
-              eq(medicalDetailTable.personId, personTable.id),
-            )
-            .where(
-              and(
-                eq(medicalDetailTable.id, id),
-                eq(personTable.creatorId, session.user.id),
-              ),
-            );
-          const detail = row?.detail;
+          const detail = await getOwnedDetail(id);
 
           if (!detail) {
             return {

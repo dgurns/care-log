@@ -87,7 +87,8 @@ export async function generateDailyBrief(
     .select({
       id: medicalDetailTable.id,
       summary: medicalDetailTable.summary,
-      fullRawContent: medicalDetailTable.fullRawContent,
+      detailedNotes: medicalDetailTable.detailedNotes,
+      userRawContent: medicalDetailTable.userRawContent,
       createdAt: medicalDetailTable.createdAt,
     })
     .from(medicalDetailTable)
@@ -99,7 +100,7 @@ export async function generateDailyBrief(
       ? allMedicalDetails
           .map(
             (detail) =>
-              `Summary: ${detail.summary}\nFull Content: ${detail.fullRawContent}\nDate: ${detail.createdAt}`,
+              `Summary: ${detail.summary}\nDetailed Notes: ${detail.detailedNotes}${detail.userRawContent ? `\nUser's Original Words: ${detail.userRawContent}` : ""}\nDate: ${detail.createdAt}`,
           )
           .join("\n\n")
       : "No medical details available.";

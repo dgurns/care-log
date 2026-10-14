@@ -82,8 +82,14 @@ export const personTable = sqliteTable("person", {
 
 export const medicalDetailTable = sqliteTable("medical_detail", {
   id: integer().primaryKey({ autoIncrement: true }),
+  // Short one-line description, shown in lists
   summary: text("summary").notNull(),
-  fullRawContent: text("full_raw_content").notNull(),
+  // Detailed, agent-written notes. The DB column keeps its original name
+  // (full_raw_content) so existing data doesn't need migrating.
+  detailedNotes: text("full_raw_content").notNull(),
+  // The user's original text, verbatim. Nullable because rows created before
+  // this column existed don't have it.
+  userRawContent: text("user_raw_content"),
   personId: integer("person_id").references(() => personTable.id),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
