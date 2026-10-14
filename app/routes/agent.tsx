@@ -76,7 +76,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   const modelMessages = await convertToModelMessages(messages);
   const result = streamText({
-    model: anthropic("claude-opus-4-6"),
+    model: anthropic("claude-opus-5-5"),
     messages: modelMessages,
     stopWhen: stepCountIs(8),
     system: `You are a medical expert with world class knowledge of medicine and the medical system including healthcare and insurance. 
