@@ -17,7 +17,8 @@
       "Bash(gem --version)",
       "WebSearch",
       "WebFetch(domain:www.better-auth.com)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Skill(claude-api)"
     ],
     "deny": []
   }

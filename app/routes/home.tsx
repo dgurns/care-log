@@ -5,11 +5,9 @@ import { useState, useEffect, useRef } from "react";
 import { redirect, useLoaderData } from "react-router";
 import { db } from "~/db";
 import { dailyBriefTable, medicalDetailTable } from "~/db/schema";
-import { eq, and, gte, count } from "drizzle-orm";
-import {
-  generateDailyBrief,
-  getDailyBriefForToday,
-} from "../utils/daily-brief";
+import { eq, count } from "drizzle-orm";
+import type { PersonDailyBrief } from "../utils/daily-brief";
+import { getDailyBriefsForUser } from "../utils/daily-brief";
 import { getPersonForUser } from "~/utils/user";
 import { auth } from "~/lib/auth-server";
 
@@ -23,8 +21,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   if (!personForCurrentUser) {
     return {
       currentPersonMedicalDetailsCount: undefined,
-      dailyBrief: null,
-      dailyBriefGeneratingPromise: null,
+      dailyBriefs: [],
     };
   }
 
@@ -37,45 +34,13 @@ export async function loader({ request }: Route.LoaderArgs) {
   const currentPersonMedicalDetailsCount =
     currentPersonMedicalDetailsCountQuery[0].count;
 
-  // If a daily brief already exists for today, return it
-  const dailyBrief = await getDailyBriefForToday(personForCurrentUser);
-  if (dailyBrief) {
-    return {
-      currentPersonMedicalDetailsCount,
-      dailyBrief,
-      dailyBriefGeneratingPromise: null,
-    };
-  }
-
-  // Check for recent medical details in past 7 days. If none, don't generate
-  // a daily brief.
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  const sevenDaysAgoISOString = sevenDaysAgo.toISOString();
-
-  const recentMedicalDetails = await db
-    .select()
-    .from(medicalDetailTable)
-    .where(
-      and(
-        eq(medicalDetailTable.personId, personForCurrentUser.id),
-        gte(medicalDetailTable.createdAt, sevenDaysAgoISOString),
-      ),
-    )
-    .limit(1);
-
-  if (recentMedicalDetails.length === 0) {
-    return {
-      currentPersonMedicalDetailsCount,
-      dailyBrief: null,
-      dailyBriefGeneratingPromise: null,
-    };
-  }
+  // Resolve daily briefs for every person created by this user (themself and
+  // anyone they've added).
+  const dailyBriefs = await getDailyBriefsForUser(session.user.id);
 
   return {
     currentPersonMedicalDetailsCount,
-    dailyBrief: null,
-    dailyBriefGeneratingPromise: generateDailyBrief(personForCurrentUser),
+    dailyBriefs,
   };
 }
 
@@ -89,12 +54,87 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
+function DailyBriefCard({ personBrief }: { personBrief: PersonDailyBrief }) {
+  const { person, brief, generatingPromise } = personBrief;
+  const [closed, setClosed] = useState(false);
+  const [generatedBrief, setGeneratedBrief] = useState<
+    typeof dailyBriefTable.$inferSelect | null
+  >(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  useEffect(() => {
+    if (generatingPromise && !brief) {
+      setIsGenerating(true);
+      generatingPromise
+        .then((generated) => {
+          setGeneratedBrief(generated);
+          setIsGenerating(false);
+        })
+        .catch(() => {
+          setIsGenerating(false);
+        });
+    }
+  }, [generatingPromise, brief]);
+
+  const currentBrief = brief || generatedBrief;
+  const shouldShowBrief = (currentBrief || isGenerating) && !closed;
+
+  if (!shouldShowBrief) {
+    return null;
+  }
+
+  return (
+    <div className="mb-0 rounded-none border-0 border-b border-emerald-200 bg-emerald-50 p-4 shadow-none sm:mb-4 sm:rounded-lg sm:border sm:shadow-lg">
+      <div className="mb-2 flex items-start justify-between">
+        <h3 className="text-lg font-semibold text-emerald-800">
+          Daily Brief — {person.firstName} {person.lastName}
+        </h3>
+        <button
+          onClick={() => setClosed(true)}
+          className="p-1 text-emerald-600 hover:text-emerald-800"
+          aria-label="Close daily brief"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M18 6L6 18"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M6 6L18 18"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+      {isGenerating ? (
+        <div className="flex items-center space-x-2 text-emerald-700">
+          <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-emerald-700"></div>
+          <span>Generating the daily brief...</span>
+        </div>
+      ) : (
+        <div className="text-sm whitespace-pre-wrap text-emerald-800">
+          {currentBrief?.brief}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
-  const {
-    currentPersonMedicalDetailsCount,
-    dailyBrief,
-    dailyBriefGeneratingPromise,
-  } = useLoaderData<typeof loader>();
+  const { currentPersonMedicalDetailsCount, dailyBriefs } =
+    useLoaderData<typeof loader>();
   const { messages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({
       api: "/agent",
@@ -102,11 +142,6 @@ export default function Home() {
   });
   const [input, setInput] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
-  const [briefClosed, setBriefClosed] = useState(false);
-  const [generatedBrief, setGeneratedBrief] = useState<
-    typeof dailyBriefTable.$inferSelect | null
-  >(null);
-  const [isGenerating, setIsGenerating] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isScrollingProgrammatically = useRef(false);
@@ -144,23 +179,6 @@ export default function Home() {
     }
   }, [messages, autoScroll]);
 
-  // Handle generating daily brief
-  useEffect(() => {
-    if (dailyBriefGeneratingPromise && !dailyBrief) {
-      setIsGenerating(true);
-      dailyBriefGeneratingPromise
-        .then((brief) => {
-          setGeneratedBrief(brief);
-          setIsGenerating(false);
-        })
-        .catch(() => {
-          setIsGenerating(false);
-        });
-    }
-  }, [dailyBriefGeneratingPromise, dailyBrief]);
-
-  const currentBrief = dailyBrief || generatedBrief;
-  const shouldShowBrief = (currentBrief || isGenerating) && !briefClosed;
   const shouldShowIntroMessage =
     messages.length === 0 && !currentPersonMedicalDetailsCount;
 
@@ -170,53 +188,9 @@ export default function Home() {
         Care Log
       </h1>
 
-      {shouldShowBrief && (
-        <div className="mb-0 rounded-none border-0 border-b border-emerald-200 bg-emerald-50 p-4 shadow-none sm:mb-4 sm:rounded-lg sm:border sm:shadow-lg">
-          <div className="mb-2 flex items-start justify-between">
-            <h3 className="text-lg font-semibold text-emerald-800">
-              Daily Brief
-            </h3>
-            <button
-              onClick={() => setBriefClosed(true)}
-              className="p-1 text-emerald-600 hover:text-emerald-800"
-              aria-label="Close daily brief"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  d="M18 6L6 18"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M6 6L18 18"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          </div>
-          {isGenerating ? (
-            <div className="flex items-center space-x-2 text-emerald-700">
-              <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-emerald-700"></div>
-              <span>Generating your daily brief...</span>
-            </div>
-          ) : (
-            <div className="text-sm whitespace-pre-wrap text-emerald-800">
-              {currentBrief?.brief}
-            </div>
-          )}
-        </div>
-      )}
+      {dailyBriefs.map((personBrief) => (
+        <DailyBriefCard key={personBrief.person.id} personBrief={personBrief} />
+      ))}
 
       <div className="flex flex-1 flex-col overflow-hidden rounded-none border-0 bg-white shadow-none sm:rounded-lg sm:border sm:border-gray-200 sm:shadow-lg">
         {/* Container for messages, thinking indicator, and end ref */}

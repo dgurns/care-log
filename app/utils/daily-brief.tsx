@@ -25,6 +25,60 @@ export async function getDailyBriefForToday(
   return null;
 }
 
+export type PersonDailyBrief = {
+  person: typeof personTable.$inferSelect;
+  brief: typeof dailyBriefTable.$inferSelect | null;
+  generatingPromise: Promise<typeof dailyBriefTable.$inferSelect> | null;
+};
+
+// Resolve the daily brief for a single person: return today's brief if it
+// already exists, otherwise kick off generation (only if there are recent
+// medical details), otherwise return nothing.
+export async function getOrGenerateDailyBrief(
+  person: typeof personTable.$inferSelect,
+): Promise<PersonDailyBrief> {
+  const existingBrief = await getDailyBriefForToday(person);
+  if (existingBrief) {
+    return { person, brief: existingBrief, generatingPromise: null };
+  }
+
+  // Check for recent medical details in past 7 days. If none, don't generate
+  // a daily brief.
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sevenDaysAgoISOString = sevenDaysAgo.toISOString();
+
+  const recentMedicalDetails = await db
+    .select()
+    .from(medicalDetailTable)
+    .where(
+      and(
+        eq(medicalDetailTable.personId, person.id),
+        gte(medicalDetailTable.createdAt, sevenDaysAgoISOString),
+      ),
+    )
+    .limit(1);
+
+  if (recentMedicalDetails.length === 0) {
+    return { person, brief: null, generatingPromise: null };
+  }
+
+  return { person, brief: null, generatingPromise: generateDailyBrief(person) };
+}
+
+// Resolve daily briefs for every person created by the given user (the user
+// themself as well as any people they've added).
+export async function getDailyBriefsForUser(
+  userId: string,
+): Promise<PersonDailyBrief[]> {
+  const people = await db
+    .select()
+    .from(personTable)
+    .where(eq(personTable.creatorId, userId));
+
+  return Promise.all(people.map((person) => getOrGenerateDailyBrief(person)));
+}
+
 export async function generateDailyBrief(
   personForCurrentUser: typeof personTable.$inferSelect,
 ) {
@@ -52,7 +106,7 @@ export async function generateDailyBrief(
 
   // Generate daily brief using AI
   const { text } = await generateText({
-    model: anthropic("claude-sonnet-4-5"),
+    model: anthropic("claude-haiku-5-5"),
     system: `You are a medical expert creating a daily brief for ${personForCurrentUser.firstName} ${personForCurrentUser.lastName}. 
         Based on their medical details, provide a daily brief with actionable recommendations for today. 
         Focus on what they should prioritize, monitor, or follow up on today. Keep it practical and personalized.
